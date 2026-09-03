@@ -8,7 +8,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 
 ## ✨ Features
 
-- ⚡ **Ultra Lightweight**: Consumes only **~5-10 MB RAM** and **<0.25% CPU** (compared to Java/Lavalink taking 500MB+).
+- ⚡ **Ultra Lightweight**: Low resource usage — efficient Rust runtime keeps the bot lean even on small VPS instances (vs. heavier JVM-based bots like Lavalink).
 - 🚀 **Instant Playlist Enqueueing (Just-In-Time Streaming)**:
   - Playlists and mixes (YouTube/Spotify) are enqueued into the queue **instantly (< 1 second)**.
   - Audio streams are extracted **Just-In-Time (JIT)** right when the song's turn arrives, eliminating long loading times and preventing expired stream URLs.
@@ -213,19 +213,7 @@ Edit `src/lang.rs` and add a new `Lang` static instance following the `EN` / `ID
 
 The Now Playing card shows the current track with playback controls (skip, stop, loop). As tracks advance, the bot reposts the card — you can choose how it handles the *previous* card via `NOW_PLAYING_BEHAVIOR`:
 
-### `old` (default) — keep history
-
-Every track posts a **new card** in the channel, and all previous cards stay behind it as a scrollable history.
-
-**Good for:** watching what was played, never missing a track, easy to click through past songs.
-
-```
-┌───────────────┐   ┌───────────────┐
-│ ▶ Track 1     │   │ ▶ Track 2     │  ← both cards remain
-└───────────────┘   └───────────────┘
-```
-
-### `new` — clean channel
+### `new` (default) — clean channel
 
 Each new card **deletes the previous one** before posting, so only the latest track is ever visible. When the queue finishes, the last card is edited in-place into a "finished" notice.
 
@@ -237,18 +225,30 @@ Each new card **deletes the previous one** before posting, so only the latest tr
 └───────────────┘   └───────────────┘
 ```
 
+### `old` — keep history
+
+Every track posts a **new card** in the channel, and all previous cards stay behind it as a scrollable history.
+
+**Good for:** watching what was played, never missing a track, easy to click through past songs.
+
+```
+┌───────────────┐   ┌───────────────┐
+│ ▶ Track 1     │   │ ▶ Track 2     │  ← both cards remain
+└───────────────┘   └───────────────┘
+```
+
 ### Switching
 
 ```bash
-# Old behavior (default) — keep card history
+# New behavior (default) — clean channel
 docker compose up -d
 
-# New behavior — clean channel
+# Old behavior — keep card history
 docker compose down
-NOW_PLAYING_BEHAVIOR=new docker compose up -d
+NOW_PLAYING_BEHAVIOR=old docker compose up -d
 ```
 
-No restart needed to keep `old` (it's the default); the env var is only read at startup, so a restart is required to change it.
+The env var is only read at startup, so a restart is required to change it.
 
 ---
 
