@@ -73,11 +73,22 @@ pub async fn handle_play(
     let requester_tag = format!("<@{}>", command.user.id);
 
     let is_url = query.starts_with("http://") || query.starts_with("https://");
-    let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+    let is_spotify_url = query.contains("open.spotify.com")
+        || query.starts_with("spotify:track")
+        || query.starts_with("spotify:album")
+        || query.starts_with("spotify:playlist");
 
     // Text query → show search results dropdown for user selection
-    if !is_url && !is_spotify {
-        let results = match source_mgr.search(&query).await {
+    if !is_url && !is_spotify_url {
+        let (platform_target, clean_query) = SourceManager::parse_platform_intent(&query);
+
+        let search_res = match platform_target {
+            crate::source::PlatformTarget::Spotify => source_mgr.search_spotify(&clean_query, 10).await,
+            crate::source::PlatformTarget::SoundCloud => source_mgr.search_soundcloud(&clean_query, 10).await,
+            crate::source::PlatformTarget::YouTube | crate::source::PlatformTarget::Any => source_mgr.search(&clean_query).await,
+        };
+
+        let results = match search_res {
             Ok(tracks) => tracks,
             Err(e) => {
                 let msg = fmt(get_lang().could_not_find, &[&e]);
@@ -188,12 +199,16 @@ pub async fn handle_play(
         queue_mgr.push_track(guild_id, track.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
-            // Mark as current track
+            // Mark as current track and record to history because it started playing!
             queue_mgr.set_current_track(guild_id, track.clone()).await;
+            queue_mgr.push_history(guild_id, track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
@@ -235,12 +250,16 @@ pub async fn handle_play(
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&first_track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&first_track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
-            // Mark as current track
+            // Mark as current track and record ONLY the track that actually starts playing
             queue_mgr.set_current_track(guild_id, first_track.clone()).await;
+            queue_mgr.push_history(guild_id, first_track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
@@ -366,11 +385,22 @@ pub async fn handle_playnext(
 
     let requester_tag = format!("<@{}>", command.user.id);
     let is_url = query.starts_with("http://") || query.starts_with("https://");
-    let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+    let is_spotify_url = query.contains("open.spotify.com")
+        || query.starts_with("spotify:track")
+        || query.starts_with("spotify:album")
+        || query.starts_with("spotify:playlist");
 
     // Text query → show search results dropdown (same as /play but flagged as play_next)
-    if !is_url && !is_spotify {
-        let results = match source_mgr.search(&query).await {
+    if !is_url && !is_spotify_url {
+        let (platform_target, clean_query) = SourceManager::parse_platform_intent(&query);
+
+        let search_res = match platform_target {
+            crate::source::PlatformTarget::Spotify => source_mgr.search_spotify(&clean_query, 10).await,
+            crate::source::PlatformTarget::SoundCloud => source_mgr.search_soundcloud(&clean_query, 10).await,
+            crate::source::PlatformTarget::YouTube | crate::source::PlatformTarget::Any => source_mgr.search(&clean_query).await,
+        };
+
+        let results = match search_res {
             Ok(tracks) => tracks,
             Err(e) => {
                 let msg = fmt(get_lang().could_not_find, &[&e]);
@@ -482,11 +512,15 @@ pub async fn handle_playnext(
         queue_mgr.push_next(guild_id, track.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
             queue_mgr.set_current_track(guild_id, track.clone()).await;
+            queue_mgr.push_history(guild_id, track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
@@ -529,11 +563,15 @@ pub async fn handle_playnext(
         queue_mgr.push_next_playlist(guild_id, resolved.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&first_track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&first_track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
             queue_mgr.set_current_track(guild_id, first_track.clone()).await;
+            queue_mgr.push_history(guild_id, first_track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();

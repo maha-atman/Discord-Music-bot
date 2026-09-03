@@ -19,6 +19,12 @@ struct SearchEntry {
     play_next: bool,
 }
 
+#[derive(Clone)]
+pub struct RecommendEntry {
+    pub tracks: Vec<TrackMetadata>,
+    pub profile: crate::source::TasteProfile,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LoopMode {
     #[default]
@@ -45,32 +51,88 @@ impl LoopMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AudioFilter {
+    #[default]
+    Off,
+    Bassboost,
+    Nightcore,
+    Vaporwave,
+    EightD,
+    Karaoke,
+}
+
+impl AudioFilter {
+    pub fn ffmpeg_filter(&self) -> Option<&'static str> {
+        match self {
+            AudioFilter::Off => None,
+            AudioFilter::Bassboost => Some("bass=g=8,dynaudnorm=f=200"),
+            AudioFilter::Nightcore => Some("asetrate=48000*1.25,aresample=48000"),
+            AudioFilter::Vaporwave => Some("asetrate=48000*0.8,aresample=48000"),
+            AudioFilter::EightD => Some("apulsator=hz=0.125"),
+            AudioFilter::Karaoke => Some("stereotools=mlev=0.03125"),
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            AudioFilter::Off => "Off",
+            AudioFilter::Bassboost => "Bass Boost 🔊",
+            AudioFilter::Nightcore => "Nightcore 🌙",
+            AudioFilter::Vaporwave => "Vaporwave 🌊",
+            AudioFilter::EightD => "8D Audio 🎧",
+            AudioFilter::Karaoke => "Karaoke 🎤",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "bassboost" | "bass" => AudioFilter::Bassboost,
+            "nightcore" | "nc" => AudioFilter::Nightcore,
+            "vaporwave" | "slowed" => AudioFilter::Vaporwave,
+            "8d" | "eightd" => AudioFilter::EightD,
+            "karaoke" => AudioFilter::Karaoke,
+            _ => AudioFilter::Off,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
     current_track: Arc<Mutex<HashMap<GuildId, TrackMetadata>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
+    audio_filters: Arc<Mutex<HashMap<GuildId, AudioFilter>>>,
+    autoplay: Arc<Mutex<HashMap<GuildId, bool>>>,
+    history: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
+    recommend_results: Arc<Mutex<HashMap<String, RecommendEntry>>>,
     /// Set right before a manual stop (e.g. jump) so the old track's
     /// TrackEndHandler does NOT advance/cycle the queue again. The first
     /// End event consumes it (with a short TTL safety net).
     skip_end: Arc<Mutex<HashMap<GuildId, Instant>>>,
+    playlist_store: Option<Arc<crate::playlist::PlaylistStore>>,
 }
 
 impl QueueManager {
-    pub fn new() -> Self {
+    pub fn new(playlist_store: Option<Arc<crate::playlist::PlaylistStore>>) -> Self {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
             current_track: Arc::new(Mutex::new(HashMap::new())),
             skip_end: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
+            audio_filters: Arc::new(Mutex::new(HashMap::new())),
+            autoplay: Arc::new(Mutex::new(HashMap::new())),
+            history: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
             last_messages: Arc::new(Mutex::new(HashMap::new())),
             search_results: Arc::new(Mutex::new(HashMap::new())),
+            recommend_results: Arc::new(Mutex::new(HashMap::new())),
+            playlist_store,
         }
     }
 
@@ -351,6 +413,21 @@ impl QueueManager {
             .unwrap_or(false)
     }
 
+    pub async fn set_recommend_results(&self, key: String, tracks: Vec<TrackMetadata>, profile: crate::source::TasteProfile) {
+        let mut map = self.recommend_results.lock().await;
+        map.insert(key, RecommendEntry { tracks, profile });
+    }
+
+    pub async fn get_recommend_entry(&self, key: &str) -> Option<RecommendEntry> {
+        let map = self.recommend_results.lock().await;
+        map.get(key).cloned()
+    }
+
+    pub async fn get_recommend_results(&self, key: &str) -> Option<Vec<TrackMetadata>> {
+        let map = self.recommend_results.lock().await;
+        map.get(key).map(|e| e.tracks.clone())
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
@@ -366,5 +443,127 @@ impl QueueManager {
         msg_map.remove(&guild_id);
         let mut sr_map = self.search_results.lock().await;
         sr_map.retain(|_, entry| entry.guild_id != guild_id);
+        let mut af_map = self.audio_filters.lock().await;
+        af_map.remove(&guild_id);
+        let mut ap_map = self.autoplay.lock().await;
+        ap_map.remove(&guild_id);
+        let mut hist_map = self.history.lock().await;
+        hist_map.remove(&guild_id);
+    }
+
+    pub async fn get_filter(&self, guild_id: GuildId) -> AudioFilter {
+        let filters = self.audio_filters.lock().await;
+        filters.get(&guild_id).copied().unwrap_or_default()
+    }
+
+    pub async fn set_filter(&self, guild_id: GuildId, filter: AudioFilter) {
+        let mut filters = self.audio_filters.lock().await;
+        if filter == AudioFilter::Off {
+            filters.remove(&guild_id);
+        } else {
+            filters.insert(guild_id, filter);
+        }
+    }
+
+    pub async fn get_autoplay(&self, guild_id: GuildId) -> bool {
+        let map = self.autoplay.lock().await;
+        map.get(&guild_id).copied().unwrap_or(false)
+    }
+
+    pub async fn set_autoplay(&self, guild_id: GuildId, enabled: bool) {
+        let mut map = self.autoplay.lock().await;
+        map.insert(guild_id, enabled);
+    }
+
+    pub async fn toggle_autoplay(&self, guild_id: GuildId) -> bool {
+        let mut map = self.autoplay.lock().await;
+        let current = map.get(&guild_id).copied().unwrap_or(false);
+        let new_val = !current;
+        map.insert(guild_id, new_val);
+        new_val
+    }
+
+    pub async fn get_history(&self, guild_id: GuildId) -> Vec<TrackMetadata> {
+        let mut map = self.history.lock().await;
+        if !map.contains_key(&guild_id) {
+            if let Some(ref store) = self.playlist_store {
+                let loaded = store.load_history(guild_id.get()).await;
+                map.insert(guild_id, loaded.into());
+            }
+        }
+        map.get(&guild_id)
+            .map(|dq| dq.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Records a track into the playback history log and persists to MongoDB.
+    /// If an identical track already exists (same title, URL, or YouTube video ID),
+    /// it will NOT be saved ("jika lagunya sama jangan di simpan").
+    /// Returns true if newly added, false if it was a duplicate and skipped.
+    pub async fn push_history(&self, guild_id: GuildId, track: TrackMetadata) -> bool {
+        let mut map = self.history.lock().await;
+
+        if !map.contains_key(&guild_id) {
+            if let Some(ref store) = self.playlist_store {
+                let loaded = store.load_history(guild_id.get()).await;
+                map.insert(guild_id, loaded.into());
+            }
+        }
+
+        let dq = map.entry(guild_id).or_default();
+
+        let track_yt_id = crate::source::SourceManager::extract_youtube_id(&track.url)
+            .or_else(|| crate::source::SourceManager::extract_youtube_id(&track.stream_url));
+
+        let already_exists = dq.iter().any(|t| {
+            if t.title.eq_ignore_ascii_case(&track.title) {
+                return true;
+            }
+            if !t.url.is_empty() && t.url == track.url {
+                return true;
+            }
+            if let Some(ref tid) = track_yt_id {
+                let other_yt_id = crate::source::SourceManager::extract_youtube_id(&t.url)
+                    .or_else(|| crate::source::SourceManager::extract_youtube_id(&t.stream_url));
+                if other_yt_id.as_deref() == Some(tid.as_str()) {
+                    return true;
+                }
+            }
+            false
+        });
+
+        if already_exists {
+            return false;
+        }
+
+        if dq.len() >= 50 {
+            dq.pop_front();
+        }
+        dq.push_back(track);
+
+        // Asynchronously persist to MongoDB Atlas (or local fallback)
+        if let Some(ref store) = self.playlist_store {
+            let store_clone = store.clone();
+            let tracks: Vec<TrackMetadata> = dq.iter().cloned().collect();
+            let gid = guild_id.get();
+            tokio::spawn(async move {
+                let _ = store_clone.save_history(gid, tracks).await;
+            });
+        }
+
+        true
+    }
+
+    pub async fn clear_history(&self, guild_id: GuildId) {
+        let mut map = self.history.lock().await;
+        map.insert(guild_id, VecDeque::new());
+
+        if let Some(ref store) = self.playlist_store {
+            let store_clone = store.clone();
+            let gid = guild_id.get();
+            tokio::spawn(async move {
+                let _ = store_clone.clear_history(gid).await;
+            });
+        }
     }
 }

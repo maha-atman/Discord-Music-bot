@@ -1,8 +1,10 @@
 mod commands;
 mod handler;
 mod lang;
+pub mod playlist;
 mod queue;
-mod source;
+pub mod source;
+pub mod ai;
 mod utils;
 
 use handler::Handler;
@@ -39,14 +41,16 @@ async fn main() {
         | GatewayIntents::non_privileged();
 
     let source_mgr = Arc::new(SourceManager::new());
-    let queue_mgr = Arc::new(QueueManager::new());
+    let playlist_store = Arc::new(playlist::PlaylistStore::init().await);
+    let queue_mgr = Arc::new(QueueManager::new(Some(playlist_store.clone())));
 
     let handler = Handler {
         source_mgr,
         queue_mgr,
+        playlist_store,
     };
 
-    let songbird_config = songbird::Config::default().preallocated_tracks(4);
+    let songbird_config = songbird::Config::default().preallocated_tracks(1);
     let songbird_voice = songbird::Songbird::serenity_from_config(songbird_config);
 
     let mut client = Client::builder(&token, intents)

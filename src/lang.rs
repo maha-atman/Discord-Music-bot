@@ -20,6 +20,12 @@ pub struct Lang {
     pub cmd_leave: &'static str,
     pub cmd_ping: &'static str,
     pub cmd_help: &'static str,
+    pub cmd_seek: &'static str,
+    pub cmd_lyrics: &'static str,
+    pub cmd_filter: &'static str,
+    pub cmd_autoplay: &'static str,
+    pub cmd_playlist: &'static str,
+    pub cmd_history: &'static str,
 
     // === Command responses ===
     pub playback_paused: &'static str,
@@ -34,6 +40,35 @@ pub struct Lang {
     pub removed_track: &'static str,     // has #{} {} {}
     pub jumped_to: &'static str,         // has #{} {} {}
     pub repeat_mode_set: &'static str,   // has {} {}
+    pub seek_success: &'static str,      // has {}
+    pub lyrics_title: &'static str,      // has {} {}
+    pub lyrics_footer: &'static str,     // has {}
+    pub filter_set: &'static str,        // has {}
+    pub filter_disabled: &'static str,
+    pub autoplay_enabled: &'static str,
+    pub autoplay_disabled: &'static str,
+    pub autoplay_requester: &'static str,
+    pub playlist_saved: &'static str,       // has {} {}
+    pub playlist_loaded: &'static str,      // has {} {}
+    pub playlist_deleted: &'static str,     // has {}
+    pub playlist_not_found: &'static str,   // has {}
+    pub playlist_empty_queue: &'static str,
+    pub playlist_list_title: &'static str,
+    pub playlist_list_empty: &'static str,
+    pub playlist_show_title: &'static str,  // has {}
+    pub history_title: &'static str,
+    pub history_empty: &'static str,
+    pub history_footer: &'static str,       // has {}
+    pub history_cleared: &'static str,
+    pub cmd_recommend: &'static str,
+    pub recommend_title: &'static str,
+    pub recommend_taste_header: &'static str,
+    pub recommend_songs_header: &'static str,
+    pub recommend_play_all: &'static str,
+    pub recommend_select_placeholder: &'static str,
+    pub recommend_empty: &'static str,
+    pub recommend_enqueued_all: &'static str, // has {}
+    pub recommend_enqueued_one: &'static str, // has {}
 
     // === Error messages ===
     pub nothing_playing: &'static str,
@@ -56,6 +91,10 @@ pub struct Lang {
     pub could_not_extract: &'static str,    // has {}
     pub selection_expired: &'static str,
     pub not_connected_vc: &'static str,
+    pub invalid_time_format: &'static str,
+    pub seek_exceeds_duration: &'static str, // has {}
+    pub lyrics_not_found: &'static str,      // has {}
+    pub lyrics_no_track: &'static str,
 
     // === Embed: Now Playing ===
     pub now_playing_title: &'static str,
@@ -119,6 +158,12 @@ pub struct Lang {
     pub help_playnext: &'static str,
     pub help_stop_leave: &'static str,
     pub help_ping: &'static str,
+    pub help_seek: &'static str,
+    pub help_lyrics: &'static str,
+    pub help_filter: &'static str,
+    pub help_autoplay: &'static str,
+    pub help_playlist: &'static str,
+    pub help_history: &'static str,
 
     // === Ping ===
     pub ping_title: &'static str,
@@ -177,6 +222,13 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_leave: "Disconnect the bot from the voice channel",
     cmd_ping: "Check bot latency and audio pipeline status",
     cmd_help: "Show available music commands",
+    cmd_seek: "Seek to a specific time in the current track (e.g. 1:30 or 90)",
+    cmd_lyrics: "Display lyrics for the current song or a search query",
+    cmd_filter: "Apply an audio filter (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
+    cmd_autoplay: "Toggle automatic music recommendations when the queue ends",
+    cmd_playlist: "Manage personal saved music playlists (save, load, list, show, delete)",
+    cmd_history: "View or clear the playback history log used for Autoplay (/history [clear])",
+    cmd_recommend: "Get AI music recommendations based on your server taste (40% YT, 30% Spotify, 30% SoundCloud)",
 
     playback_paused: "⏸️ Playback paused.",
     playback_resumed: "▶️ Playback resumed.",
@@ -190,6 +242,34 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     removed_track: "🗑️ Removed **#{}** [**{}**]({}) from the queue.",
     jumped_to: "⏭️ Jumped to **#{}**: [**{}**]({})",
     repeat_mode_set: "{} Repeat mode set to **{}**",
+    seek_success: "⏩ Seeked to **{}**",
+    lyrics_title: "📝 Lyrics: {} - {}",
+    lyrics_footer: "Powered by LRCLIB • Requested by {}",
+    filter_set: "🎛️ Audio filter set to **{}**",
+    filter_disabled: "➡️ Audio filter **disabled**.",
+    autoplay_enabled: "📻 Autoplay **enabled**! Bot will keep playing related songs when the queue ends.",
+    autoplay_disabled: "➡️ Autoplay **disabled**.",
+    autoplay_requester: "Autoplay 📻",
+    playlist_saved: "💾 Saved **{}** tracks to playlist **{}**!",
+    playlist_loaded: "📂 Loaded **{}** tracks from playlist **{}** into the queue!",
+    playlist_deleted: "🗑️ Playlist **{}** has been deleted.",
+    playlist_not_found: "⚠️ Playlist **{}** was not found.",
+    playlist_empty_queue: "⚠️ The current queue is empty. Nothing to save!",
+    playlist_list_title: "📋 Your Saved Playlists",
+    playlist_list_empty: "ℹ️ You don't have any saved playlists yet. Use `/playlist save <name>` to save your current queue!",
+    playlist_show_title: "📋 Playlist: {}",
+    history_title: "📜 Playback History Log",
+    history_empty: "ℹ️ No tracks in playback history log yet.",
+    history_footer: "Total: {} unique song(s) • Autoplay Reference Active",
+    history_cleared: "🗑️ Playback history log has been cleared.",
+    recommend_title: "✨ AI Music Recommendations",
+    recommend_taste_header: "📊 Server Taste Profile",
+    recommend_songs_header: "🎵 Recommended Songs for You",
+    recommend_play_all: "▶️ Enqueue All",
+    recommend_select_placeholder: "Choose a song to play immediately...",
+    recommend_empty: "⚠️ Could not generate recommendations. Try playing some more songs first!",
+    recommend_enqueued_all: "✅ Enqueued **{}** recommended tracks into the queue!",
+    recommend_enqueued_one: "✅ Enqueued **{}** from recommendations!",
 
     nothing_playing: "⚠️ Nothing is currently playing.",
     not_connected: "⚠️ Bot is not connected to a voice channel.",
@@ -211,6 +291,10 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     could_not_extract: "❌ Could not find or extract audio: {}",
     selection_expired: "❌ Selection expired or invalid. Try `/play` again.",
     not_connected_vc: "❌ Not connected to a voice channel.",
+    invalid_time_format: "❌ Invalid time format. Use `mm:ss` (e.g. `1:30`) or seconds (e.g. `90`).",
+    seek_exceeds_duration: "⚠️ Cannot seek beyond track duration (total: **{}**).",
+    lyrics_not_found: "❌ No lyrics found for **{}**.",
+    lyrics_no_track: "⚠️ Nothing is currently playing. Please specify a song name: `/lyrics <song>`",
 
     now_playing_title: "🎵 Now Playing",
     field_duration: "⏱️ Duration",
@@ -270,6 +354,12 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_playnext: "Add a song to play next (priority)",
     help_stop_leave: "Stop music or disconnect bot from voice",
     help_ping: "Check bot latency and audio engine status",
+    help_seek: "Seek to a specific timestamp in the current track",
+    help_lyrics: "Show lyrics for the current song or specified title",
+    help_filter: "Apply audio filters (bassboost, nightcore, etc.)",
+    help_autoplay: "Toggle autoplay (automatic related recommendations)",
+    help_playlist: "Save, load, list, show, or delete personal playlists",
+    help_history: "Show server playback history log (used as Autoplay reference)",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Bot Gateway Status",
@@ -320,6 +410,13 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_leave: "Putuskan bot dari voice channel",
     cmd_ping: "Cek latensi bot dan status pipeline audio",
     cmd_help: "Tampilkan perintah musik yang tersedia",
+    cmd_seek: "Lompat ke menit/detik tertentu pada lagu saat ini (contoh: 1:30 atau 90)",
+    cmd_lyrics: "Tampilkan lirik lagu saat ini atau cari berdasarkan judul",
+    cmd_filter: "Terapkan efek suara (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
+    cmd_autoplay: "Aktifkan/nonaktifkan rekomendasi musik otomatis saat antrean habis",
+    cmd_playlist: "Kelola playlist musik pribadi (save, load, list, show, delete)",
+    cmd_history: "Lihat atau bersihkan log riwayat lagu yang diputar (/history [clear])",
+    cmd_recommend: "Rekomendasi lagu berdasarkan selera server (40% YT, 30% Spotify, 30% SoundCloud)",
 
     playback_paused: "⏸️ Pemutaran dijeda.",
     playback_resumed: "▶️ Pemutaran dilanjutkan.",
@@ -333,6 +430,34 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     removed_track: "🗑️ Dihapus **#{}** [**{}**]({}) dari antrean.",
     jumped_to: "⏭️ Melompat ke **#{}**: [**{}**]({})",
     repeat_mode_set: "{} Mode ulang diatur ke **{}**",
+    seek_success: "⏩ Berhasil melompat ke **{}**",
+    lyrics_title: "📝 Lirik: {} - {}",
+    lyrics_footer: "Didukung oleh LRCLIB • Diminta oleh {}",
+    filter_set: "🎛️ Filter audio diatur ke **{}**",
+    filter_disabled: "➡️ Filter audio **dinonaktifkan**.",
+    autoplay_enabled: "📻 Autoplay **diaktifkan**! Bot akan terus memutar lagu rekomendasi saat antrean habis.",
+    autoplay_disabled: "➡️ Autoplay **dinonaktifkan**.",
+    autoplay_requester: "Autoplay 📻",
+    playlist_saved: "💾 Berhasil menyimpan **{}** lagu ke playlist **{}**!",
+    playlist_loaded: "📂 Berhasil memuat **{}** lagu dari playlist **{}** ke dalam antrean!",
+    playlist_deleted: "🗑️ Playlist **{}** berhasil dihapus.",
+    playlist_not_found: "⚠️ Playlist **{}** tidak ditemukan.",
+    playlist_empty_queue: "⚠️ Antrean musik saat ini kosong. Tidak ada lagu untuk disimpan!",
+    playlist_list_title: "📋 Daftar Playlist Tersimpan Kamu",
+    playlist_list_empty: "ℹ️ Kamu belum memiliki playlist tersimpan. Gunakan `/playlist save <nama>` untuk menyimpan antrean saat ini!",
+    playlist_show_title: "📋 Playlist: {}",
+    history_title: "📜 Log Riwayat Pemutaran Lagu",
+    history_empty: "ℹ️ Belum ada riwayat lagu yang diputar.",
+    history_footer: "Total: {} lagu unik • Acuan Autoplay Aktif",
+    history_cleared: "🗑️ Log riwayat pemutaran musik berhasil dibersihkan.",
+    recommend_title: "✨ Rekomendasi Musik Spesial",
+    recommend_taste_header: "📊 Profil Selera Musik Server",
+    recommend_songs_header: "🎵 Lagu Rekomendasi untuk Kamu",
+    recommend_play_all: "▶️ Putar Semua ke Antrean",
+    recommend_select_placeholder: "Pilih lagu untuk langsung diputar...",
+    recommend_empty: "⚠️ Belum bisa meracik rekomendasi. Coba putar beberapa lagu terlebih dahulu!",
+    recommend_enqueued_all: "✅ Berhasil memasukkan **{}** lagu rekomendasi ke dalam antrean!",
+    recommend_enqueued_one: "✅ Berhasil memutar **{}** dari rekomendasi!",
 
     nothing_playing: "⚠️ Tidak ada yang sedang diputar.",
     not_connected: "⚠️ Bot tidak terhubung ke voice channel.",
@@ -354,6 +479,10 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     could_not_extract: "❌ Tidak dapat menemukan atau mengekstrak audio: {}",
     selection_expired: "❌ Pilihan sudah kedaluwarsa atau tidak valid. Coba `/play` lagi.",
     not_connected_vc: "❌ Tidak terhubung ke voice channel.",
+    invalid_time_format: "❌ Format waktu salah. Gunakan `mm:ss` (contoh: `1:30`) atau detik (contoh: `90`).",
+    seek_exceeds_duration: "⚠️ Tidak bisa melompat melebihi durasi lagu (total: **{}**).",
+    lyrics_not_found: "❌ Lirik tidak ditemukan untuk **{}**.",
+    lyrics_no_track: "⚠️ Tidak ada lagu yang sedang diputar. Harap sebutkan judul lagu: `/lyrics <judul>`",
 
     now_playing_title: "🎵 Sekarang Diputar",
     field_duration: "⏱️ Durasi",
@@ -413,6 +542,12 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_playnext: "Tambah lagu untuk diputar berikutnya (prioritas)",
     help_stop_leave: "Hentikan musik atau putuskan bot dari voice",
     help_ping: "Cek latensi bot dan status mesin audio",
+    help_seek: "Lompat ke menit/detik tertentu pada lagu yang sedang diputar",
+    help_lyrics: "Tampilkan lirik untuk lagu saat ini atau lagu yang dicari",
+    help_filter: "Terapkan efek suara (bassboost, nightcore, dll.)",
+    help_autoplay: "Atur mode autoplay (rekomendasi lagu otomatis)",
+    help_playlist: "Simpan, muat, lihat, atau hapus playlist pribadi",
+    help_history: "Lihat log riwayat lagu yang diputar (acuan Autoplay)",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Status Gateway Bot",
@@ -456,6 +591,12 @@ pub static ACTIVE_LANG: LazyLock<&'static Lang> = LazyLock::new(|| {
 
 pub fn get_lang() -> &'static Lang {
     &ACTIVE_LANG
+}
+
+pub fn is_id() -> bool {
+    std::env::var("BOT_LANG")
+        .map(|s| s.eq_ignore_ascii_case("id"))
+        .unwrap_or(false)
 }
 
 /// Format a lang string with positional {} placeholders.

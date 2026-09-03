@@ -56,15 +56,26 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/resume` | Resume playback of paused track | `/resume` |
 | `/skip` | Skip to the next track in queue | `/skip` |
 | `/replay` | Replay the current track from the beginning | `/replay` |
+| `/seek <time>` | Seek to a specific timestamp in the current track | `/seek time:1:30` or `/seek time:90` |
 | `/shuffle` | Toggle random / shuffle mode on or off | `/shuffle` |
 | `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
 | `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |
+| `/filter <mode>` | Apply audio filter: `off`, `bassboost`, `nightcore`, `vaporwave`, `8d`, `karaoke` | `/filter mode:bassboost` |
+| `/autoplay [enable]` | Toggle automatic music recommendations when the queue ends | `/autoplay` or `/autoplay enable:true` |
 | `/stop` | Stop playback and clear the queue | `/stop` |
 | `/queue` | View current queue, platform sources, repeat mode, and total duration | `/queue` |
 | `/nowplaying` | Show details, platform source, thumbnail, and active loop mode | `/nowplaying` |
+| `/lyrics [query]` | Show lyrics for the current song or search by title | `/lyrics` or `/lyrics query:yoasobi idol` |
 | `/jump <pos>` | Jump to a specific position in the queue | `/jump 5` |
 | `/remove <pos>` | Remove a specific track from the queue | `/remove 3` |
 | `/clear` | Clear the entire queue (keeps current track playing) | `/clear` |
+| `/playlist save <name>` | Save current music queue as a personal playlist | `/playlist save name:My Favorites` |
+| `/playlist load <name>` | Load a saved personal playlist into the queue | `/playlist load name:My Favorites` |
+| `/playlist list` | List all your saved personal playlists | `/playlist list` |
+| `/playlist show <name>` | Inspect tracks inside a saved personal playlist | `/playlist show name:My Favorites` |
+| `/playlist delete <name>` | Delete a saved personal playlist | `/playlist delete name:My Favorites` |
+| `/history [clear]` | View server playback history log (used by Autoplay) or clear it | `/history` or `/history clear:true` |
+| `/recommend [mood] [count]` | AI recommendations up to 100 songs with pagination buttons & direct platform search (e.g. "100 lagu yui dari spotify") | `/recommend mood:100 lagu yui dari spotify` or `/recommend count:100` |
 | `/volume <0-100>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
 | `/ping` | Show bot latency | `/ping` |
@@ -95,7 +106,23 @@ LOG_LEVEL=INFO
 BOT_LANG=en
 
 # Now Playing behavior: old (default, history) or new (clean channel)
-NOW_PLAYING_BEHAVIOR=old
+NOW_PLAYING_BEHAVIOR=new
+
+# Universal Multi-Provider AI DJ (Gemini, Claude, OpenAI, Grok, Qwen, Ollama, etc.)
+LLM_PROVIDER=gemini
+LLM_API_KEY=your_api_key_here
+LLM_MODEL=gemini-1.5-flash
+# LLM_BASE_URL=https://api.groq.com/openai/v1
+
+# Max items to load from YouTube playlists, mixes (list=RD), radio, or Spotify (0 = unlimited)
+MAX_PLAYLIST_ITEMS=50
+
+# MongoDB Atlas (Personal playlist & history cloud storage)
+MONGO_USER=usermaybees
+MONGO_PASSWORD=your_password
+MONGO_HOST=cluster0.ezivhgd.mongodb.net
+MONGO_APP_NAME=Cluster0
+MONGO_DATABASE=discord_music_bot
 ```
 
 ### 3. Run with Docker
@@ -144,7 +171,8 @@ discord-bot/
     ├── main.rs            # Bot entrypoint, tracing & Gateway connection
     ├── handler.rs         # Serenity interaction handler & Slash command registration
     ├── queue.rs           # Guild queue state & LoopMode manager
-    ├── source.rs          # Metadata extraction (yt-dlp, Spotify Embed API)
+    ├── source.rs          # Metadata extraction (yt-dlp, Spotify Guest API, SoundCloud)
+    ├── ai.rs              # Universal Multi-Provider AI DJ client (Gemini, Claude, Grok, Qwen, Ollama)
     ├── lang.rs            # Bilingual string tables (EN / ID) — all user-facing text
     ├── commands/          # Modular slash command handlers
     │   ├── mod.rs         # Command router & registration
