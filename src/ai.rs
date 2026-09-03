@@ -120,7 +120,7 @@ impl AiClient {
                 provider, model, web_search_enabled, base_url
             );
         } else {
-            info!("AI DJ Client: No LLM_API_KEY provided. Using local heuristic fallback.");
+            info!("AI DJ Client: No LLM_API_KEY provided. AI features disabled (commands will skip LLM calls and use local fallbacks).");
         }
 
         Self {
@@ -146,10 +146,47 @@ impl AiClient {
         !self.api_key.is_empty()
     }
 
+    /// Returns true only if the client is fully usable — has a key AND (for
+    /// openai_compatible providers) a base URL configured. Without this check,
+    /// Ollama with no LLM_BASE_URL would silently send requests to api.openai.com
+    /// and get 401. Use this at call sites that need the LLM to actually work.
+    pub fn is_usable(&self) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+        match self.provider {
+            AiProvider::Gemini | AiProvider::Claude | AiProvider::OpenAi => true,
+            AiProvider::OpenAiCompatible => self.base_url.is_some(),
+        }
+    }
+
+    /// Returns a short status string for the /ping command's Configuration field.
+    /// Format: "Provider=X, Model=Y, Usable=true/false (reason)"
+    pub fn diagnostics(&self) -> String {
+        if !self.is_enabled() {
+            return "Disabled (no API key)".to_string();
+        }
+        let provider_name = match self.provider {
+            AiProvider::Gemini => "Gemini",
+            AiProvider::Claude => "Claude",
+            AiProvider::OpenAi => "OpenAI",
+            AiProvider::OpenAiCompatible => "OpenAI-Compatible",
+        };
+        let usable = if self.is_usable() {
+            "OK".to_string()
+        } else {
+            "misconfigured (missing LLM_BASE_URL)".to_string()
+        };
+        format!("{} | {} | {}", provider_name, self.model, usable)
+    }
+
     /// Generic text generation across all supported LLM providers
     pub async fn generate_text(&self, system: &str, prompt: &str) -> Result<String, String> {
         if !self.is_enabled() {
             return Err("LLM_API_KEY not configured".to_string());
+        }
+        if !self.is_usable() {
+            return Err("LLM is enabled but not properly configured (missing LLM_BASE_URL for openai_compatible provider)".to_string());
         }
 
         match self.provider {
