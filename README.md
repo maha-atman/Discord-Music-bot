@@ -118,9 +118,13 @@ LLM_MODEL=gemini-1.5-flash
 MAX_PLAYLIST_ITEMS=50
 
 # MongoDB Atlas (Personal playlist & history cloud storage)
-MONGO_USER=usermaybees
-MONGO_PASSWORD=your_password
-MONGO_HOST=cluster0.ezivhgd.mongodb.net
+# OPTIONAL — Leave ALL MongoDB fields blank to use the default local file storage
+# (data/playlists.json). This works out-of-the-box for new users with zero setup.
+# Uncomment + fill these in .env to enable cloud-synced playlists across multiple bot instances.
+# Recommended: MongoDB Atlas free tier (https://www.mongodb.com/cloud/atlas).
+# MONGO_USER=
+# MONGO_PASSWORD=
+# MONGO_HOST=
 MONGO_APP_NAME=Cluster0
 MONGO_DATABASE=discord_music_bot
 ```
