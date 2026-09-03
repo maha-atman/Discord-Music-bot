@@ -54,11 +54,26 @@ impl AiClient {
             .trim()
             .to_string();
 
-        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| match provider {
-            AiProvider::Gemini => "gemini-1.5-flash".to_string(),
-            AiProvider::Claude => "claude-3-5-haiku-latest".to_string(),
-            AiProvider::OpenAi => "gpt-4o-mini".to_string(),
-            AiProvider::OpenAiCompatible => "gpt-4o-mini".to_string(),
+        // Default model selection. For openai_compatible, the model depends on which
+        // provider was selected (grok vs groq vs ollama etc) since they all use
+        // different model namespaces. Falls back to a sensible default per provider.
+        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| {
+            match provider {
+                AiProvider::Gemini => "gemini-1.5-flash".to_string(),
+                AiProvider::Claude => "claude-3-5-haiku-latest".to_string(),
+                AiProvider::OpenAi => "gpt-4o-mini".to_string(),
+                AiProvider::OpenAiCompatible => {
+                    match provider_str.to_lowercase().trim() {
+                        "grok" => "grok-2-latest".to_string(),
+                        "groq" => "llama-3.1-70b-versatile".to_string(),
+                        "qwen" => "qwen-plus".to_string(),
+                        "ollama" => "llama3.1".to_string(),
+                        "deepseek" => "deepseek-chat".to_string(),
+                        "openrouter" => "anthropic/claude-3.5-sonnet".to_string(),
+                        _ => "gpt-4o-mini".to_string(), // generic openai_compatible
+                    }
+                }
+            }
         });
 
         let base_url = std::env::var("LLM_BASE_URL")
