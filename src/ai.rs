@@ -38,6 +38,7 @@ pub struct AiClient {
     model: String,
     base_url: Option<String>,
     web_search_enabled: bool,
+    is_local: bool,
     trivia_cache: Cache<String, String>,
 }
 
@@ -46,10 +47,39 @@ impl AiClient {
         let provider_str = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "gemini".to_string());
         let provider = AiProvider::from_str(&provider_str);
 
+        // Resolve API key. Order of precedence:
+        //   1. LLM_API_KEY (generic, always wins)
+        //   2. Provider-specific key matching the selected provider
+        //      (GEMINI_API_KEY for gemini, CLAUDE_API_KEY for claude, etc)
+        //   3. Ollama is a special case: no API key needed, but the local
+        //      server should be reachable.
         let api_key = std::env::var("LLM_API_KEY")
-            .or_else(|_| std::env::var("GEMINI_API_KEY"))
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .or_else(|_| std::env::var("CLAUDE_API_KEY"))
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                // Provider-specific fallback. Pick the one matching the
+                // selected provider so users with multiple keys set don't
+                // accidentally route Claude's key to Gemini, etc.
+                let env_var = match provider {
+                    AiProvider::Gemini => "GEMINI_API_KEY",
+                    AiProvider::Claude => "CLAUDE_API_KEY",
+                    AiProvider::OpenAi | AiProvider::OpenAiCompatible => "OPENAI_API_KEY",
+                };
+                std::env::var(env_var).ok().filter(|s| !s.trim().is_empty())
+            })
+            .or_else(|| {
+                // Ollama doesn't need a real API key — but only the
+                // OpenAI-compatible path handles it. If the user picked
+                // ollama and set no key, use a placeholder so is_enabled()
+                // returns true and the request still goes out.
+                if matches!(provider, AiProvider::OpenAiCompatible)
+                    && provider_str.to_lowercase().trim() == "ollama"
+                {
+                    Some("ollama".to_string())
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default()
             .trim()
             .to_string();
@@ -104,6 +134,7 @@ impl AiClient {
             model,
             base_url,
             web_search_enabled,
+            is_local: provider_str.to_lowercase().trim() == "ollama",
             trivia_cache: Cache::builder()
                 .max_capacity(200)
                 .time_to_live(Duration::from_secs(24 * 3600))
@@ -135,7 +166,10 @@ impl AiClient {
     }
 
     async fn enrich_with_web_search(&self, prompt: &str) -> String {
-        if !self.web_search_enabled {
+        // Local providers (Ollama) can't use real-time web search context
+        // effectively, and the DuckDuckGo fallback adds ~1-2s of latency
+        // for no benefit. Skip for local providers unless explicitly enabled.
+        if !self.web_search_enabled || self.is_local {
             return prompt.to_string();
         }
 
