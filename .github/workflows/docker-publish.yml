@@ -99,6 +99,13 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
+      - name: Set IMAGE_NAME (lowercase for GHCR)
+        # Same lowercase transform as the build job — merge job uses env.IMAGE_NAME
+        # in tag/manifest construction and GHCR rejects uppercase repo names.
+        run: |
+          echo "IMAGE_NAME=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "${GITHUB_ENV}"
+        shell: bash
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
