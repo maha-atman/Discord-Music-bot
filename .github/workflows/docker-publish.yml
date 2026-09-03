@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+  # IMAGE_NAME is set per-job via the "Set IMAGE_NAME" step below (lowercase required by GHCR)
 
 jobs:
   # Build masing-masing platform di runner native (tanpa emulasi/cross-compile)
@@ -30,6 +30,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set IMAGE_NAME (lowercase for GHCR)
+        # GHCR rejects uppercase repo names. Compute lowercase from github.repository
+        # so the workflow stays dynamic across forks without flipping hardcoded values.
+        run: |
+          echo "IMAGE_NAME=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "${GITHUB_ENV}"
+        shell: bash
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
