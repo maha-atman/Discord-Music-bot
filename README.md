@@ -100,12 +100,12 @@ cp .env.example .env
 Set your configuration in `.env`:
 ```env
 DISCORD_BOT_TOKEN=your_discord_bot_token_here
-LOG_LEVEL=INFO
+RUST_LOG=info
 
 # Language: en (default) or id (Indonesian)
 BOT_LANG=en
 
-# Now Playing behavior: old (default, history) or new (clean channel)
+# Now Playing behavior: new (default, clean channel) or old (keep history)
 NOW_PLAYING_BEHAVIOR=new
 
 # Universal Multi-Provider AI DJ (Gemini, Claude, OpenAI, Grok, Qwen, Ollama, etc.)
