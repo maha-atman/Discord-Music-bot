@@ -111,9 +111,152 @@ impl SourceManager {
             .unwrap_or(50)
     }
 
+    /// Parses a jasmr.net watch URL into (rj_code, short_title, cv_name).
+    /// URL format: https://www.jasmr.net/watch/{RJ_CODE}/{slug}
+    fn parse_jasmr_url(url: &str) -> Option<(String, String, Option<String>)> {
+        let url = url.trim_end_matches('/');
+        let watch_pos = url.find("/watch/")?;
+        let after_watch = &url[watch_pos + 7..];
+        let mut parts = after_watch.splitn(2, '/');
+        let rj_code = parts.next().unwrap_or("").to_string();
+        let slug = parts.next().unwrap_or("");
+        if rj_code.is_empty() {
+            return None;
+        }
+
+        // Extract CV (voice actress) name from slug: look for "-cv-" segment
+        let words: Vec<&str> = slug.split('-').collect();
+        let cv_name = words
+            .windows(2)
+            .position(|w| w[0].eq_ignore_ascii_case("cv"))
+            .map(|cv_idx| {
+                // Collect remaining words after "cv" as the CV name
+                words[cv_idx + 1..]
+                    .iter()
+                    .map(|w| {
+                        let mut c = w.chars();
+                        match c.next() {
+                            None => String::new(),
+                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|s| !s.is_empty());
+
+        // Build short title: take words up to "cv" or first 8 words, whichever is less
+        let title_words: Vec<&str> = words
+            .iter()
+            .take_while(|w| !w.eq_ignore_ascii_case("cv"))
+            .copied()
+            .collect();
+        let short_title_words: Vec<&str> = title_words.iter().copied().take(8).collect();
+        let short_title = short_title_words.join(" ");
+
+        let display_title = if short_title.is_empty() {
+            rj_code.clone()
+        } else {
+            short_title
+        };
+
+        Some((rj_code, display_title, cv_name))
+    }
+
+    /// Resolves a jasmr.net URL directly from their media CDN.
+    /// jasmr.net serves audio at a predictable URL: /media/audio/{RJ_CODE}.mp3
+    /// Falls back to YouTube search if the direct URL is unreachable.
+    async fn resolve_jasmr_url(&self, url: &str) -> Result<Vec<TrackMetadata>, String> {
+        let (rj_code, short_title, cv_name) = Self::parse_jasmr_url(url)
+            .ok_or_else(|| "Could not parse jasmr.net URL".to_string())?;
+
+        // Build display title: "Short Title (CV Name)" or just "Short Title"
+        let display_title = match &cv_name {
+            Some(cv) => format!("{} (CV: {})", short_title, cv),
+            None => short_title.clone(),
+        };
+
+        // Primary: direct MP3 from jasmr.net CDN
+        let direct_mp3 = format!("https://www.jasmr.net/media/audio/{}.mp3", rj_code);
+        info!("Trying jasmr.net direct stream: {}", direct_mp3);
+
+        let head_ok = self
+            .http_client
+            .head(&direct_mp3)
+            .send()
+            .await
+            .map(|r| r.status().is_success() || r.status().as_u16() == 206)
+            .unwrap_or(false);
+
+        if head_ok {
+            info!("jasmr.net direct stream confirmed for {}", rj_code);
+            return Ok(vec![TrackMetadata {
+                title: display_title,
+                url: url.to_string(),
+                stream_url: direct_mp3,
+                duration: None,
+                thumbnail: Some(format!("https://www.jasmr.net/media/image/{}.jpg", rj_code)),
+                author: cv_name,
+                source: "JASMR".to_string(),
+                requester: None,
+                view_count: None,
+                is_official: true,
+            }]);
+        }
+
+        // Fallback: YouTube search using RJ code
+        info!("Direct stream unavailable for {}, falling back to YouTube search", rj_code);
+        let repackage = |mut tracks: Vec<TrackMetadata>| -> Vec<TrackMetadata> {
+            tracks.iter_mut().for_each(|t| {
+                t.url = url.to_string();
+                t.source = "JASMR".to_string();
+                if t.title.is_empty() {
+                    t.title = display_title.clone();
+                }
+            });
+            tracks
+        };
+
+        // Strategy 1: RJ code alone
+        if let Ok(results) = self.resolve_single_query(&rj_code).await {
+            if !results.is_empty() {
+                return Ok(repackage(results));
+            }
+        }
+
+        // Strategy 2: CV name + RJ code
+        if let Some(ref cv) = cv_name {
+            let q = format!("{} {}", cv, rj_code);
+            if let Ok(results) = self.resolve_single_query(&q).await {
+                if !results.is_empty() {
+                    return Ok(repackage(results));
+                }
+            }
+        }
+
+        // Strategy 3: Short title + RJ code (first 8 words)
+        let q3 = format!("{} {}", short_title, rj_code);
+        if let Ok(results) = self.resolve_single_query(&q3).await {
+            if !results.is_empty() {
+                return Ok(repackage(results));
+            }
+        }
+
+        Err(format!(
+            "Could not stream JASMR track {} — direct URL unreachable and not found on YouTube.",
+            rj_code
+        ))
+    }
+
     /// Resolves a user query (YouTube, Spotify, SoundCloud, or keyword) into a list of TrackMetadata.
     pub async fn resolve(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+
+        // jasmr.net is a Vue SPA with no yt-dlp extractor — handle it via YouTube search fallback
+        let is_jasmr = query.contains("jasmr.net/watch/");
+        if is_jasmr {
+            return self.resolve_jasmr_url(query).await;
+        }
 
         if is_spotify {
             info!("Resolving Spotify URL: {}", query);
