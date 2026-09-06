@@ -164,8 +164,10 @@ impl SourceManager {
     }
 
     /// Resolves a jasmr.net URL directly from their media CDN.
-    /// jasmr.net serves audio at a predictable URL: /media/audio/{RJ_CODE}.mp3
-    /// Falls back to YouTube search if the direct URL is unreachable.
+    /// Tries the following in order:
+    ///   1. Direct MP3:  /media/audio/{RJ_CODE}.mp3
+    ///   2. Direct M4A:  /media/audio/{RJ_CODE}.m4a
+    ///   3. YouTube search fallback (3 strategies)
     async fn resolve_jasmr_url(&self, url: &str) -> Result<Vec<TrackMetadata>, String> {
         let (rj_code, short_title, cv_name) = Self::parse_jasmr_url(url)
             .ok_or_else(|| "Could not parse jasmr.net URL".to_string())?;
@@ -176,24 +178,44 @@ impl SourceManager {
             None => short_title.clone(),
         };
 
-        // Primary: direct MP3 from jasmr.net CDN
+        // Helper: probe a CDN URL via HTTP HEAD
+        let probe = |stream_url: String| async move {
+            self.http_client
+                .head(&stream_url)
+                .send()
+                .await
+                .map(|r| r.status().is_success() || r.status().as_u16() == 206)
+                .unwrap_or(false)
+        };
+
+        // 1. Primary: direct MP3 from jasmr.net CDN
         let direct_mp3 = format!("https://www.jasmr.net/media/audio/{}.mp3", rj_code);
-        info!("Trying jasmr.net direct stream: {}", direct_mp3);
-
-        let head_ok = self
-            .http_client
-            .head(&direct_mp3)
-            .send()
-            .await
-            .map(|r| r.status().is_success() || r.status().as_u16() == 206)
-            .unwrap_or(false);
-
-        if head_ok {
-            info!("jasmr.net direct stream confirmed for {}", rj_code);
+        info!("Trying jasmr.net direct MP3 stream: {}", direct_mp3);
+        if probe(direct_mp3.clone()).await {
+            info!("jasmr.net MP3 stream confirmed for {}", rj_code);
             return Ok(vec![TrackMetadata {
                 title: display_title,
                 url: url.to_string(),
                 stream_url: direct_mp3,
+                duration: None,
+                thumbnail: Some(format!("https://www.jasmr.net/media/image/{}.jpg", rj_code)),
+                author: cv_name,
+                source: "JASMR".to_string(),
+                requester: None,
+                view_count: None,
+                is_official: true,
+            }]);
+        }
+
+        // 2. Secondary: direct M4A from jasmr.net CDN
+        let direct_m4a = format!("https://www.jasmr.net/media/audio/{}.m4a", rj_code);
+        info!("Trying jasmr.net direct M4A stream: {}", direct_m4a);
+        if probe(direct_m4a.clone()).await {
+            info!("jasmr.net M4A stream confirmed for {}", rj_code);
+            return Ok(vec![TrackMetadata {
+                title: display_title,
+                url: url.to_string(),
+                stream_url: direct_m4a,
                 duration: None,
                 thumbnail: Some(format!("https://www.jasmr.net/media/image/{}.jpg", rj_code)),
                 author: cv_name,
