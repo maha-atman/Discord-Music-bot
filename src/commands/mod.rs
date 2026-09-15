@@ -427,7 +427,19 @@ async fn handle_search_play(
     // Defer before expensive create_input
     let _ = component.defer(&ctx.http).await;
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = component
+                .create_followup(
+                    &ctx.http,
+                    CreateInteractionResponseFollowup::new()
+                        .content(get_lang().not_connected_vc),
+                )
+                .await;
+            return;
+        }
+    };
     let call_lock = match manager.get(guild_id) {
         Some(lock) => lock,
         None => {
@@ -591,7 +603,18 @@ async fn handle_recommend_select(
 
     let _ = component.defer(&ctx.http).await;
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = component
+                .create_followup(
+                    &ctx.http,
+                    CreateInteractionResponseFollowup::new().content(get_lang().not_connected_vc),
+                )
+                .await;
+            return;
+        }
+    };
     let call_lock = match manager.get(guild_id) {
         Some(lock) => lock,
         None => match manager.join(guild_id, connect_to).await {
@@ -722,7 +745,18 @@ async fn handle_recommend_all(
 
     let _ = component.defer(&ctx.http).await;
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = component
+                .create_followup(
+                    &ctx.http,
+                    CreateInteractionResponseFollowup::new().content(get_lang().not_connected_vc),
+                )
+                .await;
+            return;
+        }
+    };
     let call_lock = match manager.get(guild_id) {
         Some(lock) => lock,
         None => match manager.join(guild_id, connect_to).await {

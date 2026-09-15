@@ -373,42 +373,43 @@ pub async fn handle_queue_component(
                 let _ = component.defer(&ctx.http).await;
 
                 if let Some(target_track) = queue_mgr.jump_to(guild_id, idx).await {
-                    let manager = songbird::get(ctx).await.unwrap();
-                    if let Some(handler_lock) = manager.get(guild_id) {
-                        let mut handler = handler_lock.lock().await;
-                        // Arm latch BEFORE stop so the old track's End handler
-                        // doesn't re-advance the rotated queue.
-                        queue_mgr.set_skip_end(guild_id).await;
-                        handler.queue().stop();
-                        let filter = queue_mgr.get_filter(guild_id).await;
-                        let input = source_mgr
-                            .create_input_filtered(
-                                &target_track.stream_url,
-                                None,
-                                filter.ffmpeg_filter(),
-                            )
-                            .await;
-                        let track_handle = handler.enqueue_input(input).await;
-                        let _ = track_handle.set_volume(0.8);
+                    if let Some(manager) = songbird::get(ctx).await {
+                        if let Some(handler_lock) = manager.get(guild_id) {
+                            let mut handler = handler_lock.lock().await;
+                            // Arm latch BEFORE stop so the old track's End handler
+                            // doesn't re-advance the rotated queue.
+                            queue_mgr.set_skip_end(guild_id).await;
+                            handler.queue().stop();
+                            let filter = queue_mgr.get_filter(guild_id).await;
+                            let input = source_mgr
+                                .create_input_filtered(
+                                    &target_track.stream_url,
+                                    None,
+                                    filter.ffmpeg_filter(),
+                                )
+                                .await;
+                            let track_handle = handler.enqueue_input(input).await;
+                            let _ = track_handle.set_volume(0.8);
 
-                        // Mark as current track so now-playing reports the jumped-to song
-                        queue_mgr.set_current_track(guild_id, target_track.clone()).await;
+                            // Mark as current track so now-playing reports the jumped-to song
+                            queue_mgr.set_current_track(guild_id, target_track.clone()).await;
 
-                        let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
-                        if loop_mode == LoopMode::Track {
-                            let _ = track_handle.enable_loop();
+                            let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+                            if loop_mode == LoopMode::Track {
+                                let _ = track_handle.enable_loop();
+                            }
+
+                            let _ = track_handle.add_event(
+                                Event::Track(TrackEvent::End),
+                                TrackEndHandler {
+                                    guild_id,
+                                    queue_mgr: queue_mgr.clone(),
+                                    source_mgr: source_mgr.clone(),
+                                    call_lock: handler_lock.clone(),
+                                    http: ctx.http.clone(),
+                                },
+                            );
                         }
-
-                        let _ = track_handle.add_event(
-                            Event::Track(TrackEvent::End),
-                            TrackEndHandler {
-                                guild_id,
-                                queue_mgr: queue_mgr.clone(),
-                                source_mgr: source_mgr.clone(),
-                                call_lock: handler_lock.clone(),
-                                http: ctx.http.clone(),
-                            },
-                        );
                     }
                 }
             }
@@ -445,12 +446,13 @@ pub async fn handle_queue_component(
         // Defer immediately, then stop current track
         let _ = component.defer(&ctx.http).await;
 
-        let manager = songbird::get(ctx).await.unwrap();
-        if let Some(handler_lock) = manager.get(guild_id) {
-            let handler = handler_lock.lock().await;
-            if let Some(current) = handler.queue().current() {
-                let _ = current.disable_loop();
-                let _ = current.stop();
+        if let Some(manager) = songbird::get(ctx).await {
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                if let Some(current) = handler.queue().current() {
+                    let _ = current.disable_loop();
+                    let _ = current.stop();
+                }
             }
         }
 
@@ -463,10 +465,11 @@ pub async fn handle_queue_component(
             )
             .await;
     } else if custom_id == "queue_stop" {
-        let manager = songbird::get(ctx).await.unwrap();
-        if let Some(handler_lock) = manager.get(guild_id) {
-            let handler = handler_lock.lock().await;
-            handler.queue().stop();
+        if let Some(manager) = songbird::get(ctx).await {
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                handler.queue().stop();
+            }
         }
         queue_mgr.clear(guild_id).await;
 
@@ -497,11 +500,14 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
         let queue_len = queue_mgr.get_queue(guild_id).await.len();
         let upcoming_count = queue_len.saturating_sub(1);
 
-        let manager = songbird::get(ctx).await.unwrap();
-        let is_paused = if let Some(handler_lock) = manager.get(guild_id) {
-            let handler = handler_lock.lock().await;
-            if let Some(track_handle) = handler.queue().current() {
-                matches!(track_handle.get_info().await, Ok(info) if info.playing == songbird::tracks::PlayMode::Pause)
+        let is_paused = if let Some(manager) = songbird::get(ctx).await {
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                if let Some(track_handle) = handler.queue().current() {
+                    matches!(track_handle.get_info().await, Ok(info) if info.playing == songbird::tracks::PlayMode::Pause)
+                } else {
+                    false
+                }
             } else {
                 false
             }

@@ -136,9 +136,14 @@ pub async fn handle_playlist(
                 return;
             }
 
-            let manager = songbird::get(ctx)
-                .await
-                .expect("Songbird Voice client placed in at initialization");
+            let manager = match songbird::get(ctx).await {
+                Some(m) => m,
+                None => {
+                    let msg = fmt(get_lang().failed_connect_voice, &[&"Songbird voice client not initialized"]);
+                    let _ = send_followup(ctx, command, &msg).await;
+                    return;
+                }
+            };
 
             let call_lock = match manager.join(guild_id, connect_to).await {
                 Ok(lock) => lock,
