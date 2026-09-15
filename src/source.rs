@@ -1556,7 +1556,11 @@ impl SourceManager {
         if let Some(pat) = matched_pattern {
             let lower = cleaned.to_lowercase();
             if let Some(idx) = lower.find(pat) {
-                cleaned.replace_range(idx..idx + pat.len(), " ");
+                let char_offset = lower[..idx].chars().count();
+                let pat_char_count = pat.chars().count();
+                let byte_start = cleaned.char_indices().nth(char_offset).map(|(i, _)| i).unwrap_or(cleaned.len());
+                let byte_end = cleaned.char_indices().nth(char_offset + pat_char_count).map(|(i, _)| i).unwrap_or(cleaned.len());
+                cleaned.replace_range(byte_start..byte_end, " ");
             }
         }
 
@@ -1942,6 +1946,14 @@ mod issue1_tests {
                 author
             );
         }
+    }
+
+    #[test]
+    fn parse_platform_intent_unicode_no_panic() {
+        let q = "İSTANBUL dari spotify";
+        let (target, cleaned) = SourceManager::parse_platform_intent(q);
+        assert_eq!(target, super::PlatformTarget::Spotify);
+        assert!(!cleaned.contains("spotify"));
     }
 
     #[test]

@@ -25,7 +25,13 @@ pub async fn handle_pause(ctx: &Context, command: &CommandInteraction) {
     }
 
     let _ = command.defer(&ctx.http).await;
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = send_followup(ctx, command, get_lang().not_connected).await;
+            return;
+        }
+    };
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
@@ -51,7 +57,13 @@ pub async fn handle_resume(ctx: &Context, command: &CommandInteraction) {
     }
 
     let _ = command.defer(&ctx.http).await;
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = send_followup(ctx, command, get_lang().not_connected).await;
+            return;
+        }
+    };
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
@@ -76,7 +88,13 @@ pub async fn handle_skip(ctx: &Context, command: &CommandInteraction, _queue_mgr
         return;
     }
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = send_response(ctx, command, get_lang().not_connected, true).await;
+            return;
+        }
+    };
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
@@ -103,7 +121,13 @@ pub async fn handle_stop(ctx: &Context, command: &CommandInteraction, queue_mgr:
     }
 
     let _ = command.defer(&ctx.http).await;
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = send_followup(ctx, command, get_lang().not_connected).await;
+            return;
+        }
+    };
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         handler.queue().stop();
@@ -141,7 +165,14 @@ pub async fn handle_repeat(ctx: &Context, command: &CommandInteraction, queue_mg
 
     queue_mgr.set_loop_mode(guild_id, mode).await;
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let msg = fmt(get_lang().repeat_mode_set, &[&mode.emoji(), &mode.as_str()]);
+            let _ = send_response(ctx, command, &msg, false).await;
+            return;
+        }
+    };
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
@@ -179,7 +210,13 @@ pub async fn handle_volume(ctx: &Context, command: &CommandInteraction) {
         None => 100.0,
     };
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = send_response(ctx, command, get_lang().not_in_voice, true).await;
+            return;
+        }
+    };
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
@@ -206,7 +243,13 @@ pub async fn handle_leave(ctx: &Context, command: &CommandInteraction, queue_mgr
         return;
     }
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let _ = send_response(ctx, command, get_lang().not_in_voice, true).await;
+            return;
+        }
+    };
     if manager.get(guild_id).is_some() {
         // Clear queue BEFORE leaving to prevent TrackEndHandler from re-populating
         queue_mgr.clear(guild_id).await;
@@ -338,7 +381,13 @@ pub async fn handle_jump(
             return;
         }
 
-        let manager = songbird::get(ctx).await.unwrap();
+        let manager = match songbird::get(ctx).await {
+            Some(m) => m,
+            None => {
+                let _ = send_followup(ctx, command, get_lang().not_connected).await;
+                return;
+            }
+        };
         if let Some(call_lock) = manager.get(guild_id) {
             let mut handler = call_lock.lock().await;
             // Arm the latch BEFORE stopping: the old track's End handler would
@@ -406,7 +455,13 @@ pub async fn handle_replay(
             return;
         }
 
-        let manager = songbird::get(ctx).await.unwrap();
+        let manager = match songbird::get(ctx).await {
+            Some(m) => m,
+            None => {
+                let _ = send_followup(ctx, command, get_lang().not_connected).await;
+                return;
+            }
+        };
         if let Some(call_lock) = manager.get(guild_id) {
             let mut handler = call_lock.lock().await;
             handler.queue().stop();
@@ -533,7 +588,13 @@ pub async fn handle_seek(
             return;
         }
 
-        let manager = songbird::get(ctx).await.unwrap();
+        let manager = match songbird::get(ctx).await {
+            Some(m) => m,
+            None => {
+                let _ = send_followup(ctx, command, get_lang().not_connected).await;
+                return;
+            }
+        };
         if let Some(call_lock) = manager.get(guild_id) {
             let mut handler = call_lock.lock().await;
 
@@ -604,7 +665,19 @@ pub async fn handle_filter(
     let filter = crate::queue::AudioFilter::from_str(mode_str);
     queue_mgr.set_filter(guild_id, filter).await;
 
-    let manager = songbird::get(ctx).await.unwrap();
+    let manager = match songbird::get(ctx).await {
+        Some(m) => m,
+        None => {
+            let response_msg = if filter == crate::queue::AudioFilter::Off {
+                get_lang().filter_disabled.to_string()
+            } else {
+                let fname = filter.name();
+                fmt(get_lang().filter_set, &[&fname])
+            };
+            let _ = send_response(ctx, command, &response_msg, false).await;
+            return;
+        }
+    };
     if let Some(call_lock) = manager.get(guild_id) {
         let mut handler = call_lock.lock().await;
 
@@ -815,11 +888,12 @@ pub async fn handle_music_component(
 
     match custom_id {
         "music_pause" => {
-            let manager = songbird::get(ctx).await.unwrap();
-            if let Some(handler_lock) = manager.get(guild_id) {
-                let handler = handler_lock.lock().await;
-                if let Some(current) = handler.queue().current() {
-                    let _ = current.pause();
+            if let Some(manager) = songbird::get(ctx).await {
+                if let Some(handler_lock) = manager.get(guild_id) {
+                    let handler = handler_lock.lock().await;
+                    if let Some(current) = handler.queue().current() {
+                        let _ = current.pause();
+                    }
                 }
             }
 
@@ -841,11 +915,12 @@ pub async fn handle_music_component(
             }
         }
         "music_resume" => {
-            let manager = songbird::get(ctx).await.unwrap();
-            if let Some(handler_lock) = manager.get(guild_id) {
-                let handler = handler_lock.lock().await;
-                if let Some(current) = handler.queue().current() {
-                    let _ = current.play();
+            if let Some(manager) = songbird::get(ctx).await {
+                if let Some(handler_lock) = manager.get(guild_id) {
+                    let handler = handler_lock.lock().await;
+                    if let Some(current) = handler.queue().current() {
+                        let _ = current.play();
+                    }
                 }
             }
 
@@ -870,12 +945,13 @@ pub async fn handle_music_component(
             // Defer immediately, then stop current track
             let _ = component.defer(&ctx.http).await;
 
-            let manager = songbird::get(ctx).await.unwrap();
-            if let Some(handler_lock) = manager.get(guild_id) {
-                let handler = handler_lock.lock().await;
-                if let Some(current) = handler.queue().current() {
-                    let _ = current.disable_loop();
-                    let _ = current.stop();
+            if let Some(manager) = songbird::get(ctx).await {
+                if let Some(handler_lock) = manager.get(guild_id) {
+                    let handler = handler_lock.lock().await;
+                    if let Some(current) = handler.queue().current() {
+                        let _ = current.disable_loop();
+                        let _ = current.stop();
+                    }
                 }
             }
 
@@ -897,19 +973,22 @@ pub async fn handle_music_component(
             };
             queue_mgr.set_loop_mode(guild_id, next_mode).await;
 
-            let manager = songbird::get(ctx).await.unwrap();
-            let is_paused = if let Some(handler_lock) = manager.get(guild_id) {
-                let handler = handler_lock.lock().await;
-                if let Some(current) = handler.queue().current() {
-                    match next_mode {
-                        LoopMode::Track => {
-                            let _ = current.enable_loop();
+            let is_paused = if let Some(manager) = songbird::get(ctx).await {
+                if let Some(handler_lock) = manager.get(guild_id) {
+                    let handler = handler_lock.lock().await;
+                    if let Some(current) = handler.queue().current() {
+                        match next_mode {
+                            LoopMode::Track => {
+                                let _ = current.enable_loop();
+                            }
+                            LoopMode::Queue | LoopMode::Off => {
+                                let _ = current.disable_loop();
+                            }
                         }
-                        LoopMode::Queue | LoopMode::Off => {
-                            let _ = current.disable_loop();
-                        }
+                        matches!(current.get_info().await, Ok(info) if info.playing == songbird::tracks::PlayMode::Pause)
+                    } else {
+                        false
                     }
-                    matches!(current.get_info().await, Ok(info) if info.playing == songbird::tracks::PlayMode::Pause)
                 } else {
                     false
                 }
@@ -934,10 +1013,11 @@ pub async fn handle_music_component(
             }
         }
         "music_stop" => {
-            let manager = songbird::get(ctx).await.unwrap();
-            if let Some(handler_lock) = manager.get(guild_id) {
-                let handler = handler_lock.lock().await;
-                handler.queue().stop();
+            if let Some(manager) = songbird::get(ctx).await {
+                if let Some(handler_lock) = manager.get(guild_id) {
+                    let handler = handler_lock.lock().await;
+                    handler.queue().stop();
+                }
             }
             queue_mgr.clear(guild_id).await;
 
