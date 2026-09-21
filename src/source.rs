@@ -1,10 +1,11 @@
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use songbird::input::{Input, YoutubeDl};
+use std::net::{IpAddr, SocketAddr};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackMetadata {
@@ -63,6 +64,8 @@ pub struct TasteProfile {
 
 pub struct SourceManager {
     http_client: reqwest::Client,
+    /// Lazily built client for jasmr.net, pinned to DoH-resolved addresses.
+    jasmr_client: tokio::sync::OnceCell<reqwest::Client>,
     query_cache: Cache<String, Vec<TrackMetadata>>,
     stream_cache: Cache<String, String>,
     spotify_token_cache: Cache<String, String>,
@@ -81,6 +84,7 @@ impl SourceManager {
                 .connect_timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
+            jasmr_client: tokio::sync::OnceCell::new(),
             query_cache: Cache::builder()
                 .max_capacity(100)
                 .time_to_live(Duration::from_secs(4 * 3600))
@@ -163,14 +167,150 @@ impl SourceManager {
         Some((rj_code, display_title, cv_name))
     }
 
-    /// Resolves a jasmr.net URL directly from their media CDN.
-    /// Tries the following in order:
-    ///   1. Direct MP3:  /media/audio/{RJ_CODE}.mp3
-    ///   2. Direct M4A:  /media/audio/{RJ_CODE}.m4a
-    ///   3. YouTube search fallback (3 strategies)
+    /// Makes an API-returned media path absolute (the API returns `/media/...`).
+    fn absolute_jasmr_url(path: &str) -> String {
+        if path.starts_with("http://") || path.starts_with("https://") {
+            path.to_string()
+        } else {
+            format!("https://www.jasmr.net{}", path)
+        }
+    }
+
+    /// Parses an `H:MM:SS` / `MM:SS` duration string into a `Duration`.
+    fn parse_hms(value: &str) -> Option<Duration> {
+        let parts: Vec<u64> = value
+            .split(':')
+            .map(|p| p.trim().parse::<u64>())
+            .collect::<Result<_, _>>()
+            .ok()?;
+        match parts.as_slice() {
+            [h, m, s] => Some(Duration::from_secs(h * 3600 + m * 60 + s)),
+            [m, s] => Some(Duration::from_secs(m * 60 + s)),
+            [s] => Some(Duration::from_secs(*s)),
+            _ => None,
+        }
+    }
+
+    /// HTTP client for `www.jasmr.net`.
+    ///
+    /// Some ISPs (Indonesia's "Internet Positif") poison DNS for jasmr.net and answer
+    /// with a complaint-landing page, so every request fails with a connect error even
+    /// though the site itself is reachable. When that happens, this resolves the host
+    /// over DNS-over-HTTPS and pins the returned addresses to the hostname, which keeps
+    /// TLS SNI and certificate validation pointed at `www.jasmr.net`.
+    async fn jasmr_client(&self) -> reqwest::Client {
+        if let Some(client) = self.jasmr_client.get() {
+            return client.clone();
+        }
+
+        let mut builder = reqwest::Client::builder()
+            .user_agent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+                 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
+            .tcp_keepalive(Some(Duration::from_secs(30)))
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10));
+
+        match Self::resolve_via_doh("www.jasmr.net").await {
+            Ok(addrs) if !addrs.is_empty() => {
+                let sockets: Vec<SocketAddr> =
+                    addrs.iter().map(|ip| SocketAddr::new(*ip, 443)).collect();
+                info!("jasmr.net resolved over DoH: {:?}", sockets);
+                builder = builder.resolve_to_addrs("www.jasmr.net", &sockets);
+            }
+            Ok(_) => warn!("jasmr.net DoH lookup returned no records; using system resolver"),
+            Err(e) => warn!("jasmr.net DoH lookup failed ({}); using system resolver", e),
+        }
+
+        let client = builder.build().unwrap_or_else(|_| self.http_client.clone());
+        let _ = self.jasmr_client.set(client.clone());
+        client
+    }
+
+    /// Resolves `host` to A records through a DoH JSON endpoint, bypassing ISP-level
+    /// DNS interception (plain UDP/53 to public resolvers gets rewritten, HTTPS to the
+    /// same resolvers does not).
+    async fn resolve_via_doh(host: &str) -> Result<Vec<IpAddr>, String> {
+        const ENDPOINTS: [&str; 2] = [
+            "https://cloudflare-dns.com/dns-query",
+            "https://dns.google/resolve",
+        ];
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let mut last_err = "no DoH endpoint configured".to_string();
+        for endpoint in ENDPOINTS {
+            let url = format!("{}?name={}&type=A", endpoint, host);
+            let resp = match client
+                .get(&url)
+                .header("accept", "application/dns-json")
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => resp,
+                Ok(resp) => {
+                    last_err = format!("{} returned HTTP {}", endpoint, resp.status());
+                    continue;
+                }
+                Err(e) => {
+                    last_err = format!("{} unreachable: {}", endpoint, e);
+                    continue;
+                }
+            };
+
+            let json: serde_json::Value = match resp.json().await {
+                Ok(json) => json,
+                Err(e) => {
+                    last_err = format!("{} returned invalid JSON: {}", endpoint, e);
+                    continue;
+                }
+            };
+
+            let addrs: Vec<IpAddr> = json
+                .get("Answer")
+                .and_then(|a| a.as_array())
+                .map(|answers| {
+                    answers
+                        .iter()
+                        .filter(|a| a.get("type").and_then(|t| t.as_u64()) == Some(1))
+                        .filter_map(|a| a.get("data").and_then(|d| d.as_str()))
+                        .filter_map(|ip| ip.parse::<IpAddr>().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if !addrs.is_empty() {
+                return Ok(addrs);
+            }
+            last_err = format!("{} returned no A records", endpoint);
+        }
+
+        Err(last_err)
+    }
+
+    /// Resolves a jasmr.net watch URL into streamable TrackMetadata.
+    ///
+    /// Resolution order:
+    ///   1. Official API: `GET /api/v1/videos?code={RJ_CODE}` → canonical `source`
+    ///   2. Direct M4A:   `/media/audio/{RJ_CODE}.m4a` (what audio entries serve)
+    ///   3. Direct MP3:   `/media/audio/{RJ_CODE}.mp3` (legacy entries only)
+    ///   4. YouTube search fallback (3 strategies)
+    ///
+    /// jasmr.net is DNS-blocked on some ISPs (Indonesia's "Internet Positif" answers
+    /// with a complaint-landing page instead of the Cloudflare A records), so every
+    /// request here uses [`Self::jasmr_client`], which falls back to DNS-over-HTTPS
+    /// when the system resolver has been intercepted.
     async fn resolve_jasmr_url(&self, url: &str) -> Result<Vec<TrackMetadata>, String> {
+        const BASE: &str = "https://www.jasmr.net";
+
         let (rj_code, short_title, cv_name) = Self::parse_jasmr_url(url)
             .ok_or_else(|| "Could not parse jasmr.net URL".to_string())?;
+
+        let client = self.jasmr_client().await;
 
         // Build display title: "Short Title (CV Name)" or just "Short Title"
         let display_title = match &cv_name {
@@ -178,52 +318,77 @@ impl SourceManager {
             None => short_title.clone(),
         };
 
-        // Helper: probe a CDN URL via HTTP HEAD
-        let probe = |stream_url: String| async move {
-            self.http_client
-                .head(&stream_url)
-                .send()
-                .await
-                .map(|r| r.status().is_success() || r.status().as_u16() == 206)
-                .unwrap_or(false)
+        // Cover art lives under /media/images/{RJ}/{RJ}-0.webp — the previously
+        // guessed /media/image/{RJ}.jpg does not exist and 404s in Discord embeds.
+        let default_thumbnail = format!("{}/media/images/{}/{}-0.webp", BASE, rj_code, rj_code);
+
+        let track = |stream_url: String, duration: Option<Duration>, thumbnail: Option<String>| {
+            TrackMetadata {
+                title: display_title.clone(),
+                url: url.to_string(),
+                stream_url,
+                duration,
+                thumbnail: Some(thumbnail.unwrap_or_else(|| default_thumbnail.clone())),
+                author: cv_name.clone(),
+                source: "JASMR".to_string(),
+                requester: None,
+                view_count: None,
+                is_official: true,
+            }
         };
 
-        // 1. Primary: direct MP3 from jasmr.net CDN
-        let direct_mp3 = format!("https://www.jasmr.net/media/audio/{}.mp3", rj_code);
-        info!("Trying jasmr.net direct MP3 stream: {}", direct_mp3);
-        if probe(direct_mp3.clone()).await {
-            info!("jasmr.net MP3 stream confirmed for {}", rj_code);
-            return Ok(vec![TrackMetadata {
-                title: display_title,
-                url: url.to_string(),
-                stream_url: direct_mp3,
-                duration: None,
-                thumbnail: Some(format!("https://www.jasmr.net/media/image/{}.jpg", rj_code)),
-                author: cv_name,
-                source: "JASMR".to_string(),
-                requester: None,
-                view_count: None,
-                is_official: true,
-            }]);
+        // Helper: probe a CDN URL via HTTP HEAD
+        let probe = |stream_url: String| {
+            let client = client.clone();
+            async move {
+                client
+                    .head(&stream_url)
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success() || r.status().as_u16() == 206)
+                    .unwrap_or(false)
+            }
+        };
+
+        // 1. Primary: the site's own API is authoritative — it returns the canonical
+        //    media path for the entry (m4a for audio works, m4a or mp4 for videos),
+        //    so nothing has to be guessed.
+        let api_url = format!("{}/api/v1/videos?code={}", BASE, rj_code);
+        info!("Trying jasmr.net API for {}: {}", rj_code, api_url);
+        if let Ok(resp) = client.get(&api_url).send().await {
+            if resp.status().is_success() {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(src) = json
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        let stream_url = Self::absolute_jasmr_url(src);
+                        let thumbnail = json
+                            .get("thumbnail")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(Self::absolute_jasmr_url);
+                        let duration = json
+                            .get("duration")
+                            .and_then(|v| v.as_str())
+                            .and_then(Self::parse_hms);
+                        info!("jasmr.net API stream confirmed for {}: {}", rj_code, stream_url);
+                        return Ok(vec![track(stream_url, duration, thumbnail)]);
+                    }
+                }
+            }
         }
 
-        // 2. Secondary: direct M4A from jasmr.net CDN
-        let direct_m4a = format!("https://www.jasmr.net/media/audio/{}.m4a", rj_code);
-        info!("Trying jasmr.net direct M4A stream: {}", direct_m4a);
-        if probe(direct_m4a.clone()).await {
-            info!("jasmr.net M4A stream confirmed for {}", rj_code);
-            return Ok(vec![TrackMetadata {
-                title: display_title,
-                url: url.to_string(),
-                stream_url: direct_m4a,
-                duration: None,
-                thumbnail: Some(format!("https://www.jasmr.net/media/image/{}.jpg", rj_code)),
-                author: cv_name,
-                source: "JASMR".to_string(),
-                requester: None,
-                view_count: None,
-                is_official: true,
-            }]);
+        // 2/3. Fallback: probe the CDN directly. Audio entries are served as .m4a;
+        //      .mp3 only exists on legacy entries, so it is probed last.
+        for ext in ["m4a", "mp3"] {
+            let candidate = format!("{}/media/audio/{}.{}", BASE, rj_code, ext);
+            info!("Trying jasmr.net direct stream: {}", candidate);
+            if probe(candidate.clone()).await {
+                info!("jasmr.net {} stream confirmed for {}", ext, rj_code);
+                return Ok(vec![track(candidate, None, None)]);
+            }
         }
 
         // Fallback: YouTube search using RJ code
@@ -2002,5 +2167,46 @@ pub fn spotify_diagnostics() -> String {
         "Official API (credentials set)".to_string()
     } else {
         "Anonymous Guest (rate-limited fallback)".to_string()
+    }
+}
+
+#[cfg(test)]
+mod jasmr_tests {
+    use super::SourceManager;
+    use std::time::Duration;
+
+    #[test]
+    fn parses_api_duration_strings() {
+        assert_eq!(
+            SourceManager::parse_hms("1:01:29"),
+            Some(Duration::from_secs(3689))
+        );
+        assert_eq!(SourceManager::parse_hms("8:44"), Some(Duration::from_secs(524)));
+        assert_eq!(SourceManager::parse_hms("45"), Some(Duration::from_secs(45)));
+        assert_eq!(SourceManager::parse_hms(""), None);
+        assert_eq!(SourceManager::parse_hms("later"), None);
+    }
+
+    #[test]
+    fn api_media_paths_become_absolute_urls() {
+        assert_eq!(
+            SourceManager::absolute_jasmr_url("/media/audio/RJ01184999.m4a"),
+            "https://www.jasmr.net/media/audio/RJ01184999.m4a"
+        );
+        assert_eq!(
+            SourceManager::absolute_jasmr_url("https://cdn.example/x.m4a"),
+            "https://cdn.example/x.m4a"
+        );
+    }
+
+    #[test]
+    fn parses_watch_urls_without_a_cv_segment() {
+        let (code, title, cv) = SourceManager::parse_jasmr_url(
+            "https://www.jasmr.net/watch/RJ01184999/twin-maid-s-whispering-eargasms",
+        )
+        .expect("watch URL should parse");
+        assert_eq!(code, "RJ01184999");
+        assert_eq!(cv, None);
+        assert!(!title.is_empty());
     }
 }

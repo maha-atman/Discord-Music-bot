@@ -35,5 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /usr/src/discord-bot/target/release/discord-music-bot /app/discord-music-bot
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
-ENTRYPOINT ["/app/discord-music-bot"]
+ENTRYPOINT ["/app/entrypoint.sh"]
