@@ -65,9 +65,18 @@ pub fn clean_song_title(raw: &str) -> String {
     ];
 
     for pat in junk_patterns {
-        let lower = cleaned.to_lowercase();
-        if let Some(idx) = lower.find(pat) {
-            cleaned.replace_range(idx..idx + pat.len(), "");
+        loop {
+            let lower = cleaned.to_lowercase();
+            if let Some(idx) = lower.find(pat) {
+                // To avoid UTF-8 panics from lowercasing length shifts, find the match boundary in `cleaned` by lowercased character counts
+                let char_offset = lower[..idx].chars().count();
+                let pat_char_count = pat.chars().count();
+                let byte_start = cleaned.char_indices().nth(char_offset).map(|(i, _)| i).unwrap_or(cleaned.len());
+                let byte_end = cleaned.char_indices().nth(char_offset + pat_char_count).map(|(i, _)| i).unwrap_or(cleaned.len());
+                cleaned.replace_range(byte_start..byte_end, "");
+            } else {
+                break;
+            }
         }
     }
 
@@ -200,5 +209,23 @@ pub async fn handle_lyrics(
             let not_found_msg = fmt(get_lang().lyrics_not_found, &[&display_title]);
             let _ = send_followup(ctx, command, &not_found_msg).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_song_title;
+
+    #[test]
+    fn test_clean_song_title_unicode_no_panic() {
+        // Turkish 'İ' lowercases to 'i\u{307}' (2 characters, multi-byte), which previously caused byte indexing panics with replace_range
+        let title = "İSTANBUL (Official Video)";
+        let cleaned = clean_song_title(title);
+        assert!(!cleaned.contains("Official Video"));
+
+        // German 'ẞ' lowercases to "ss"
+        let title2 = "GROẞ (official audio)";
+        let cleaned2 = clean_song_title(title2);
+        assert!(!cleaned2.contains("official audio"));
     }
 }
