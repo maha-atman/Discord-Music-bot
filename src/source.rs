@@ -1988,7 +1988,9 @@ impl SourceManager {
 
         while results.len() < target_count && loop_count < max_loops {
             loop_count += 1;
-            let seed_idx = (rand::random::<usize>()) % seeds.len();
+            // `random_range` is rand 0.9+/0.10's replacement for the removed
+            // `random::<usize>() % n` idiom (usize: Distribution<> was dropped).
+            let seed_idx = rand::random_range(0..seeds.len());
             let seed = &seeds[seed_idx];
 
             let candidate_opt: Option<TrackMetadata> = match platform_target {
