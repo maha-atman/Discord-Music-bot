@@ -1,5 +1,5 @@
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::rng;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, GuildId, MessageId};
 use std::collections::{HashMap, VecDeque};
@@ -183,7 +183,7 @@ impl QueueManager {
 
         // If shuffle is active, shuffle the newly added items
         if is_shuffled && queue.len() > 1 {
-            let mut rng = thread_rng();
+            let mut rng = rng();
             let slice = queue.make_contiguous();
             let shuffle_start = if start_len == 0 { 1 } else { start_len };
             if shuffle_start < slice.len() {
@@ -260,7 +260,7 @@ impl QueueManager {
             let mut q_map = self.queues.lock().await;
             if let Some(queue) = q_map.get_mut(&guild_id) {
                 if queue.len() > 2 {
-                    let mut rng = thread_rng();
+                    let mut rng = rng();
                     let slice = queue.make_contiguous();
                     slice[1..].shuffle(&mut rng);
                 }
@@ -287,7 +287,7 @@ impl QueueManager {
             if let Some(front) = queue.pop_front() {
                 queue.push_back(front);
                 if is_shuffled && queue.len() > 2 {
-                    let mut rng = thread_rng();
+                    let mut rng = rng();
                     let slice = queue.make_contiguous();
                     slice[1..].shuffle(&mut rng);
                 }
